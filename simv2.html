@@ -1,0 +1,923 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Simulador Protocolo Go-Back-N</title>
+    <style>
+        :root {
+            --color-primary: #2c3e50;
+            --color-bg: #f8f9fa;
+            --color-border: #dee2e6;
+            --color-data: #3498db;
+            --color-ack-normal: #2ecc71;
+            --color-ack-dup: #f39c12;
+            --color-error: #e74c3c;
+            --color-unsent: #e9ecef;
+            --color-pending: #f1c40f;
+            --color-acked: #2ecc71;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 15px;
+            background-color: var(--color-bg);
+            color: var(--color-primary);
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            box-sizing: border-box;
+        }
+
+        h1 {
+            margin: 0 0 15px 0;
+            font-size: 1.5rem;
+            text-align: center;
+        }
+
+        .main-container {
+            display: flex;
+            flex: 1;
+            gap: 15px;
+            overflow: hidden;
+        }
+
+        /* Paneles Izquierdos: Controles y Errores */
+        .left-panel {
+            width: 300px;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+            overflow-y: auto;
+        }
+
+        .panel {
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            border: 1px solid var(--color-border);
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        }
+
+        .panel h2 {
+            font-size: 1.1rem;
+            margin-top: 0;
+            margin-bottom: 12px;
+            border-bottom: 2px solid var(--color-border);
+            padding-bottom: 5px;
+        }
+
+        .control-group {
+            margin-bottom: 10px;
+        }
+
+        label {
+            display: block;
+            font-size: 0.9rem;
+            font-weight: bold;
+            margin-bottom: 4px;
+        }
+
+        input[type="number"], select {
+            width: 100%;
+            padding: 6px;
+            border: 1px solid var(--color-border);
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+
+        button {
+            width: 100%;
+            padding: 8px;
+            margin-bottom: 8px;
+            border: none;
+            border-radius: 4px;
+            background-color: var(--color-primary);
+            color: white;
+            cursor: pointer;
+            font-weight: bold;
+            transition: background-color 0.2s;
+        }
+
+        button:hover {
+            background-color: #1a252f;
+        }
+
+        button.btn-danger { background-color: var(--color-error); }
+        button.btn-danger:hover { background-color: #c0392b; }
+        
+        button.btn-success { background-color: var(--color-ack-normal); }
+        button.btn-success:hover { background-color: #27ae60; }
+
+        button:disabled {
+            background-color: #95a5a6;
+            cursor: not-allowed;
+        }
+
+        .row {
+            display: flex;
+            gap: 5px;
+            align-items: center;
+        }
+
+        .row input { width: 60px; }
+
+        /* Panel Central: Visualización */
+        .center-panel {
+            flex: 2;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+            min-width: 400px;
+        }
+
+        /* Ventana Deslizante */
+        .window-viz {
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            border: 1px solid var(--color-border);
+            position: relative;
+            overflow-x: auto;
+            white-space: nowrap;
+        }
+
+        .packet-row {
+            display: flex;
+            position: relative;
+            padding-top: 25px;
+            padding-bottom: 5px;
+        }
+
+        .packet-box {
+            width: 30px;
+            height: 30px;
+            border: 1px solid #7f8c8d;
+            margin-right: 4px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.8rem;
+            font-weight: bold;
+            background-color: var(--color-unsent);
+            transition: background-color 0.3s;
+            position: relative;
+        }
+
+        .packet-box.sent { background-color: var(--color-pending); color: #333; }
+        .packet-box.acked { background-color: var(--color-acked); color: white; border-color: #27ae60; }
+
+        .sliding-window {
+            position: absolute;
+            top: 20px;
+            height: 40px;
+            border: 3px solid #2980b9;
+            border-radius: 4px;
+            background: rgba(41, 128, 185, 0.1);
+            transition: left 0.3s, width 0.3s;
+            pointer-events: none;
+        }
+
+        .window-labels {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.8rem;
+            margin-bottom: 5px;
+            color: #7f8c8d;
+        }
+
+        /* Temporizador */
+        .timer-container {
+            margin-top: 10px;
+            background: #ecf0f1;
+            border-radius: 4px;
+            padding: 8px;
+        }
+
+        .timer-bar-bg {
+            height: 10px;
+            background: #bdc3c7;
+            border-radius: 5px;
+            overflow: hidden;
+            margin-top: 5px;
+        }
+
+        .timer-bar-fill {
+            height: 100%;
+            width: 0%;
+            background: var(--color-error);
+        }
+
+        /* Diagrama de Secuencia */
+        .diagram-container {
+            flex: 1;
+            background: white;
+            border-radius: 8px;
+            border: 1px solid var(--color-border);
+            position: relative;
+            overflow-y: auto;
+            overflow-x: hidden;
+        }
+
+        #sequence-svg {
+            width: 100%;
+            min-height: 100%;
+            display: block;
+        }
+
+        .axis-label {
+            font-weight: bold;
+            font-size: 1rem;
+            fill: var(--color-primary);
+        }
+
+        .state-label {
+            font-size: 0.8rem;
+            fill: #7f8c8d;
+        }
+
+        /* Consola de Logs */
+        .right-panel {
+            width: 350px;
+            background: white;
+            border-radius: 8px;
+            border: 1px solid var(--color-border);
+            display: flex;
+            flex-direction: column;
+        }
+
+        .console-header {
+            padding: 10px 15px;
+            background: var(--color-primary);
+            color: white;
+            border-top-left-radius: 7px;
+            border-top-right-radius: 7px;
+            font-weight: bold;
+            display: flex;
+            justify-content: space-between;
+        }
+
+        .console-logs {
+            flex: 1;
+            padding: 10px;
+            overflow-y: auto;
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 0.85rem;
+            background: #1e1e1e;
+            color: #d4d4d4;
+        }
+
+        .log-entry { margin-bottom: 6px; border-bottom: 1px solid #333; padding-bottom: 4px; }
+        .log-time { color: #569cd6; }
+        .log-blue { color: #569cd6; } /* DATA */
+        .log-green { color: #4af626; } /* ACK Normal */
+        .log-orange { color: #ce9178; } /* ACK Dup */
+        .log-red { color: #f44747; } /* Error / Timeout */
+        .log-white { color: #d4d4d4; } /* Info */
+
+        /* Indicador de Error Activo */
+        .active-error-indicator {
+            font-size: 0.85rem;
+            color: var(--color-error);
+            font-weight: bold;
+            margin-top: 5px;
+            min-height: 20px;
+        }
+
+    </style>
+</head>
+<body>
+
+    <h1>Simulador Protocolo Go-Back-N</h1>
+
+    <div class="main-container">
+        
+        <!-- Panel Izquierdo: Configuración y Control -->
+        <div class="left-panel">
+            
+            <div class="panel">
+                <h2>Controles de Simulación</h2>
+                
+                <div class="control-group">
+                    <label>Total de Paquetes:</label>
+                    <input type="number" id="inp-total" value="15" min="5" max="50">
+                </div>
+                <div class="control-group">
+                    <label>Tamaño de Ventana (N):</label>
+                    <input type="number" id="inp-window" value="4" min="1" max="10">
+                </div>
+                <div class="control-group">
+                    <label>Timeout (ms simulación):</label>
+                    <input type="number" id="inp-timeout" value="5000" min="3000" max="10000" step="500">
+                </div>
+                <div class="control-group">
+                    <label>Velocidad:</label>
+                    <select id="inp-speed">
+                        <option value="0.2">Muy Lento (0.2x)</option>
+                        <option value="0.5" selected>Lento (0.5x)</option>
+                        <option value="1.0">Normal (1x)</option>
+                        <option value="2.0">Rápido (2x)</option>
+                    </select>
+                </div>
+
+                <button id="btn-start" class="btn-success" onclick="startSimulation()">Iniciar Simulación</button>
+                <button id="btn-pause" onclick="togglePause()" disabled>Pausar</button>
+                <button id="btn-reset" onclick="resetSimulation()">Reiniciar Parámetros</button>
+            </div>
+
+            <div class="panel">
+                <h2>Inyección de Errores</h2>
+                <p style="font-size: 0.8rem; color: #7f8c8d; margin-top:0;">Aplicar en tiempo real. Se aplicará al siguiente evento correspondiente.</p>
+                
+                <button onclick="setPendingError('packet', 'next')">Perder próximo paquete</button>
+                <div class="row">
+                    <input type="number" id="inp-err-pkt" value="0" min="0">
+                    <button onclick="setPendingError('packet', 'specific')">Perder Paquete #</button>
+                </div>
+                
+                <hr style="border-top:1px solid #eee; margin: 10px 0;">
+                
+                <button onclick="setPendingError('ack', 'next')">Perder próximo ACK</button>
+                <div class="row">
+                    <input type="number" id="inp-err-ack" value="0" min="0">
+                    <button onclick="setPendingError('ack', 'specific')">Perder ACK #</button>
+                </div>
+
+                <hr style="border-top:1px solid #eee; margin: 10px 0;">
+
+                <button class="btn-danger" onclick="forceTimeout()">Forzar Timeout Inmediato</button>
+                
+                <div id="active-error-msg" class="active-error-indicator">Ningún error programado.</div>
+                <button onclick="clearError()" style="background:#95a5a6; padding:4px; font-size:0.8rem;">Limpiar Errores</button>
+            </div>
+
+        </div>
+
+        <!-- Panel Central: Visualizaciones -->
+        <div class="center-panel">
+            
+            <div class="window-viz">
+                <div class="window-labels">
+                    <span><strong>Base:</strong> <span id="lbl-base">0</span></span>
+                    <span><strong>NextSeqNum:</strong> <span id="lbl-next">0</span></span>
+                </div>
+                <div class="packet-row" id="packet-container">
+                    <div id="window-frame" class="sliding-window"></div>
+                    <!-- Generado por JS -->
+                </div>
+
+                <div class="timer-container">
+                    <div style="font-size: 0.85rem; font-weight: bold;">
+                        Temporizador (Paquete Base: <span id="lbl-timer-base">-</span>)
+                    </div>
+                    <div class="timer-bar-bg">
+                        <div id="timer-bar" class="timer-bar-fill"></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="diagram-container" id="diagram-scroll">
+                <svg id="sequence-svg">
+                    <defs>
+                        <marker id="arrow-blue" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                            <path d="M 0 0 L 10 5 L 0 10 z" fill="#3498db" />
+                        </marker>
+                        <marker id="arrow-green" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                            <path d="M 0 0 L 10 5 L 0 10 z" fill="#2ecc71" />
+                        </marker>
+                        <marker id="arrow-orange" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                            <path d="M 0 0 L 10 5 L 0 10 z" fill="#f39c12" />
+                        </marker>
+                        <marker id="arrow-red" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                            <path d="M 0 0 L 10 5 L 0 10 z" fill="#e74c3c" />
+                        </marker>
+                    </defs>
+                    <!-- Contenido dinámico -->
+                </svg>
+            </div>
+
+        </div>
+
+        <!-- Panel Derecho: Consola -->
+        <div class="right-panel">
+            <div class="console-header">
+                <span>Consola de Eventos</span>
+                <span id="sim-time-lbl">0.0s</span>
+            </div>
+            <div class="console-logs" id="console">
+                <div class="log-entry log-white">Simulador listo. Configure parámetros y presione Iniciar.</div>
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        // Configuración y Estado del Simulador
+        const config = {
+            transmissionDelay: 2000, // ms de simulación que tarda en llegar un msj
+            sendInterval: 600,       // ms entre envíos para evitar superposición visual
+            pixelsPerMs: 0.04,       // Escala vertical del diagrama
+            senderX: 15,             // % pos X emisor
+            receiverX: 85            // % pos X receptor
+        };
+
+        let params = {
+            totalPackets: 15,
+            windowSize: 4,
+            timeout: 5000,
+            speed: 0.5
+        };
+
+        let state = {
+            base: 0,
+            nextSeqNum: 0,
+            expectedSeqNum: 0,
+            simTime: 0,
+            lastRealTime: 0,
+            lastSendTime: -9999,
+            isRunning: false,
+            isPaused: false,
+            animationFrameId: null
+        };
+
+        let timer = {
+            active: false,
+            startTime: 0,
+            baseSeq: null
+        };
+
+        // inFlight contiene: { id, type: 'DATA'|'ACK', seq, startT, isDup, isLost, status, color }
+        let inFlight = [];
+        let nextFlightId = 0;
+
+        let pendingError = null; // { type: 'packet'|'ack', target: 'next'|'specific', num: 0 }
+
+        // Referencias DOM
+        const dom = {
+            btnStart: document.getElementById('btn-start'),
+            btnPause: document.getElementById('btn-pause'),
+            inpTotal: document.getElementById('inp-total'),
+            inpWindow: document.getElementById('inp-window'),
+            inpTimeout: document.getElementById('inp-timeout'),
+            inpSpeed: document.getElementById('inp-speed'),
+            packetContainer: document.getElementById('packet-container'),
+            windowFrame: document.getElementById('window-frame'),
+            lblBase: document.getElementById('lbl-base'),
+            lblNext: document.getElementById('lbl-next'),
+            lblTimerBase: document.getElementById('lbl-timer-base'),
+            timerBar: document.getElementById('timer-bar'),
+            svg: document.getElementById('sequence-svg'),
+            diagramScroll: document.getElementById('diagram-scroll'),
+            console: document.getElementById('console'),
+            simTimeLbl: document.getElementById('sim-time-lbl'),
+            errorMsg: document.getElementById('active-error-msg')
+        };
+
+        // --- Funciones Base ---
+
+        function initUI() {
+            dom.inpTotal.addEventListener('change', drawWindowViz);
+            dom.inpWindow.addEventListener('change', drawWindowViz);
+            dom.inpSpeed.addEventListener('change', (e) => params.speed = parseFloat(e.target.value));
+            drawWindowViz();
+        }
+
+        function writeLog(msg, colorClass) {
+            const entry = document.createElement('div');
+            entry.className = `log-entry ${colorClass}`;
+            const timeStr = (state.simTime / 1000).toFixed(1) + 's';
+            entry.innerHTML = `<span class="log-time">[${timeStr}]</span> ${msg}`;
+            dom.console.appendChild(entry);
+            dom.console.scrollTop = dom.console.scrollHeight;
+        }
+
+        function formatTime(ms) {
+            return (ms / 1000).toFixed(1) + 's';
+        }
+
+        // --- Lógica de Errores ---
+
+        function setPendingError(type, target) {
+            let num = 0;
+            if (target === 'specific') {
+                num = parseInt(document.getElementById(`inp-err-${type === 'packet' ? 'pkt' : 'ack'}`).value);
+            }
+            pendingError = { type, target, num };
+            
+            let msg = `Esperando forzar pérdida de `;
+            if (type === 'packet') msg += target === 'next' ? 'próximo paquete' : `paquete #${num}`;
+            else msg += target === 'next' ? 'próximo ACK' : `ACK #${num}`;
+            
+            dom.errorMsg.textContent = msg;
+            writeLog(`[Sistema] Programado: ${msg}`, 'log-white');
+        }
+
+        function clearError() {
+            pendingError = null;
+            dom.errorMsg.textContent = "Ningún error programado.";
+        }
+
+        function checkErrorInjection(type, seq) {
+            if (!pendingError) return false;
+            if (pendingError.type !== type) return false;
+
+            let inject = false;
+            if (pendingError.target === 'next') inject = true;
+            if (pendingError.target === 'specific' && pendingError.num === seq) inject = true;
+
+            if (inject) {
+                clearError();
+                return true;
+            }
+            return false;
+        }
+
+        function forceTimeout() {
+            if (!state.isRunning) return;
+            if (state.base === state.nextSeqNum) {
+                writeLog("[Sistema] No hay paquetes pendientes para forzar timeout.", 'log-white');
+                return;
+            }
+            writeLog("[Sistema] TIMEOUT FORZADO por usuario.", 'log-red');
+            handleTimeout();
+        }
+
+        // --- Lógica de Protocolo GBN ---
+
+        function sendPacket(seq) {
+            const isLost = checkErrorInjection('packet', seq);
+            
+            inFlight.push({
+                id: nextFlightId++,
+                type: 'DATA',
+                seq: seq,
+                startT: state.simTime,
+                isLost: isLost,
+                status: 'moving',
+                color: 'var(--color-data)',
+                label: `P${seq}`
+            });
+
+            writeLog(`Enviando Paquete ${seq}`, 'log-blue');
+            
+            // Lógica GBN: Iniciar timer si es el primero de la ventana
+            if (state.base === seq) {
+                timer.active = true;
+                timer.startTime = state.simTime;
+                timer.baseSeq = state.base;
+            }
+        }
+
+        function receivePacket(seq) {
+            if (seq === state.expectedSeqNum) {
+                writeLog(`Paquete ${seq} recibido EN ORDEN.`, 'log-blue');
+                state.expectedSeqNum++;
+                sendAck(state.expectedSeqNum - 1, false);
+            } else {
+                writeLog(`Paquete ${seq} FUERA DE ORDEN (esperado: ${state.expectedSeqNum}). Descartado.`, 'log-red');
+                if (state.expectedSeqNum > 0) {
+                    sendAck(state.expectedSeqNum - 1, true); // ACK duplicado
+                }
+            }
+        }
+
+        function sendAck(seq, isDup) {
+            const isLost = checkErrorInjection('ack', seq);
+            let color = isDup ? 'var(--color-ack-dup)' : 'var(--color-ack-normal)';
+
+            inFlight.push({
+                id: nextFlightId++,
+                type: 'ACK',
+                seq: seq,
+                isDup: isDup,
+                startT: state.simTime,
+                isLost: isLost,
+                status: 'moving',
+                color: color,
+                label: `ACK${seq}`
+            });
+
+            if (isDup) {
+                writeLog(`Enviando ACK Duplicado ${seq}`, 'log-orange');
+            } else {
+                writeLog(`Enviando ACK ${seq}`, 'log-green');
+            }
+        }
+
+        function receiveAck(seq, isDup) {
+            if (isDup) {
+                writeLog(`Emisor recibe ACK Duplicado ${seq}. Ignorado.`, 'log-orange');
+            } else if (seq >= state.base) {
+                writeLog(`Emisor recibe ACK ${seq}. Ventana avanza.`, 'log-green');
+                state.base = seq + 1;
+                
+                // Lógica GBN Temporizador
+                if (state.base === state.nextSeqNum) {
+                    // Todos confirmados, detener timer
+                    timer.active = false;
+                    timer.baseSeq = null;
+                } else {
+                    // Aún hay pendientes, reiniciar timer
+                    timer.startTime = state.simTime;
+                    timer.baseSeq = state.base;
+                    timer.active = true;
+                }
+            } else {
+                writeLog(`Emisor recibe ACK ${seq} retrasado. Ignorado.`, 'log-white');
+            }
+        }
+
+        function handleTimeout() {
+            writeLog(`TIMEOUT expirado para Paquete Base ${state.base}.`, 'log-red');
+            writeLog(`Retransmitiendo TODOS los paquetes desde ${state.base} hasta ${state.nextSeqNum - 1}.`, 'log-red');
+            
+            timer.startTime = state.simTime; // Reiniciar timer
+            state.nextSeqNum = state.base; // Retroceder nextSeqNum a base para retransmitir ventana
+        }
+
+        // --- Bucle de Simulación ---
+
+        function loop(timestamp) {
+            if (!state.isRunning) return;
+            
+            if (state.lastRealTime === 0) state.lastRealTime = timestamp;
+            const dt = timestamp - state.lastRealTime;
+            state.lastRealTime = timestamp;
+
+            if (!state.isPaused) {
+                state.simTime += dt * params.speed;
+                processSimulationLogic();
+            }
+
+            render();
+            state.animationFrameId = requestAnimationFrame(loop);
+        }
+
+        function processSimulationLogic() {
+            // Verificar finalización
+            if (state.base >= params.totalPackets) {
+                writeLog("Todos los paquetes enviados y confirmados. Simulación completada.", 'log-green');
+                stopSimulation();
+                return;
+            }
+
+            // 1. Control de Timeout GBN (Un solo timer)
+            if (timer.active && (state.simTime - timer.startTime >= params.timeout)) {
+                handleTimeout();
+            }
+
+            // 2. Control de Envío (Llenar ventana de emisor)
+            if (state.nextSeqNum < state.base + params.windowSize && state.nextSeqNum < params.totalPackets) {
+                if (state.simTime - state.lastSendTime >= config.sendInterval) {
+                    sendPacket(state.nextSeqNum);
+                    state.nextSeqNum++;
+                    state.lastSendTime = state.simTime;
+                }
+            }
+
+            // 3. Actualizar Vuelos (In-Flight)
+            for (let i = 0; i < inFlight.length; i++) {
+                let item = inFlight[i];
+                if (item.status === 'done' || item.status === 'lost_done') continue;
+
+                let progress = (state.simTime - item.startT) / config.transmissionDelay;
+
+                if (item.isLost && progress >= 0.5 && item.status !== 'lost_done') {
+                    item.status = 'lost_done';
+                    item.color = 'var(--color-error)'; // Cambiar a rojo
+                    writeLog(`[PERDIDO] ${item.type} ${item.seq} desapareció en la red.`, 'log-red');
+                }
+
+                if (!item.isLost && progress >= 1.0 && item.status !== 'done') {
+                    item.status = 'done';
+                    if (item.type === 'DATA') {
+                        receivePacket(item.seq);
+                    } else {
+                        receiveAck(item.seq, item.isDup);
+                    }
+                }
+            }
+        }
+
+        // --- Renderizado Visual ---
+
+        function drawWindowViz() {
+            const total = parseInt(dom.inpTotal.value);
+            const wSize = parseInt(dom.inpWindow.value);
+            
+            dom.packetContainer.innerHTML = '<div id="window-frame" class="sliding-window"></div>';
+            
+            for (let i = 0; i < total; i++) {
+                let div = document.createElement('div');
+                div.className = 'packet-box';
+                div.id = 'pkt-' + i;
+                div.textContent = i;
+                dom.packetContainer.appendChild(div);
+            }
+            
+            // Actualizar referencias si cambiaron
+            dom.windowFrame = document.getElementById('window-frame');
+        }
+
+        function updateWindowViz() {
+            dom.lblBase.textContent = state.base;
+            dom.lblNext.textContent = state.nextSeqNum;
+
+            const boxWidth = 34; // 30 width + 4 margin
+            const leftPos = state.base * boxWidth;
+            dom.windowFrame.style.left = leftPos + 'px';
+            dom.windowFrame.style.width = (params.windowSize * boxWidth - 4) + 'px';
+
+            for (let i = 0; i < params.totalPackets; i++) {
+                let el = document.getElementById('pkt-' + i);
+                if (!el) continue;
+                
+                el.className = 'packet-box'; // reset
+                if (i < state.base) {
+                    el.classList.add('acked');
+                } else if (i >= state.base && i < state.nextSeqNum) {
+                    el.classList.add('sent');
+                }
+            }
+        }
+
+        function updateTimerViz() {
+            if (timer.active) {
+                dom.lblTimerBase.textContent = timer.baseSeq;
+                let progress = (state.simTime - timer.startTime) / params.timeout;
+                if (progress > 1) progress = 1;
+                if (progress < 0) progress = 0;
+                dom.timerBar.style.width = (progress * 100) + '%';
+                // Cambiar color a medida que se acerca
+                dom.timerBar.style.background = progress > 0.8 ? 'var(--color-error)' : '#3498db';
+            } else {
+                dom.lblTimerBase.textContent = '-';
+                dom.timerBar.style.width = '0%';
+            }
+        }
+
+        function renderDiagram() {
+            let currentY = 40 + state.simTime * config.pixelsPerMs;
+            let svgHeight = Math.max(dom.diagramScroll.clientHeight, currentY + 100);
+            
+            dom.svg.setAttribute('height', svgHeight);
+
+            let html = dom.svg.querySelector('defs').outerHTML;
+
+            // Dibujar ejes
+            html += `<line x1="${config.senderX}%" y1="0" x2="${config.senderX}%" y2="${svgHeight}" stroke="#bdc3c7" stroke-dasharray="5,5" stroke-width="2"/>`;
+            html += `<line x1="${config.receiverX}%" y1="0" x2="${config.receiverX}%" y2="${svgHeight}" stroke="#bdc3c7" stroke-dasharray="5,5" stroke-width="2"/>`;
+            
+            // Etiquetas de eje estáticas relativas al scroll
+            let scrollY = dom.diagramScroll.scrollTop;
+            html += `<text x="${config.senderX}%" y="${scrollY + 20}" class="axis-label" text-anchor="middle">EMISOR</text>`;
+            html += `<text x="${config.receiverX}%" y="${scrollY + 20}" class="axis-label" text-anchor="middle">RECEPTOR</text>`;
+
+            // Estado Receptor
+            html += `<text x="${config.receiverX + 2}%" y="${scrollY + 40}" class="state-label">Expected: ${state.expectedSeqNum}</text>`;
+
+            // Dibujar flechas
+            inFlight.forEach(item => {
+                let startY = 40 + item.startT * config.pixelsPerMs;
+                let endY = 40 + (item.startT + config.transmissionDelay) * config.pixelsPerMs;
+                
+                let isData = item.type === 'DATA';
+                let startX = isData ? config.senderX : config.receiverX;
+                let endX = isData ? config.receiverX : config.senderX;
+
+                let progress = (state.simTime - item.startT) / config.transmissionDelay;
+                if (progress < 0) return;
+
+                let drawProgress = progress;
+                if (item.isLost && progress >= 0.5) drawProgress = 0.5;
+                if (drawProgress > 1) drawProgress = 1;
+
+                let curX = startX + drawProgress * (endX - startX);
+                let curY = startY + drawProgress * (endY - startY);
+
+                let markerColor = item.color === 'var(--color-error)' ? 'red' : 
+                                  item.color === 'var(--color-data)' ? 'blue' : 
+                                  item.color === 'var(--color-ack-normal)' ? 'green' : 'orange';
+
+                // Línea principal
+                html += `<line x1="${startX}%" y1="${startY}" x2="${curX}%" y2="${curY}" 
+                               stroke="${item.color}" stroke-width="2" 
+                               marker-end="${drawProgress === 1.0 || (item.isLost && drawProgress===0.5) ? '' : `url(#arrow-${markerColor})`}" />`;
+                
+                // Si completó la línea o se perdió a la mitad, añadir flecha final manual para mejor render
+                if (drawProgress === 1.0) {
+                     html += `<line x1="${startX}%" y1="${startY}" x2="${endX}%" y2="${endY}" stroke="${item.color}" stroke-width="2" marker-end="url(#arrow-${markerColor})"/>`;
+                }
+
+                // Etiqueta de texto
+                let textX = startX + 0.15 * (endX - startX);
+                let textY = startY + 0.15 * (endY - startY) - 5;
+                html += `<text x="${textX}%" y="${textY}" fill="${item.color}" font-size="12" font-weight="bold">${item.label}</text>`;
+
+                // Cruz de pérdida
+                if (item.isLost && progress >= 0.5) {
+                    html += `<text x="${curX}%" y="${curY}" fill="var(--color-error)" font-size="24" font-weight="bold" text-anchor="middle" dominant-baseline="central">X</text>`;
+                }
+            });
+
+            dom.svg.innerHTML = html;
+
+            // Auto-scroll
+            if (!state.isPaused) {
+                // Mantener el progreso actual en la parte inferior visible
+                let targetScroll = currentY - dom.diagramScroll.clientHeight + 100;
+                if (targetScroll > 0) {
+                    dom.diagramScroll.scrollTop = targetScroll;
+                }
+            }
+        }
+
+        function render() {
+            dom.simTimeLbl.textContent = formatTime(state.simTime);
+            updateWindowViz();
+            updateTimerViz();
+            renderDiagram();
+        }
+
+        // --- Controles de Estado ---
+
+        function startSimulation() {
+            // Leer params
+            params.totalPackets = parseInt(dom.inpTotal.value);
+            params.windowSize = parseInt(dom.inpWindow.value);
+            params.timeout = parseInt(dom.inpTimeout.value);
+            params.speed = parseFloat(dom.inpSpeed.value);
+
+            // Bloquear inputs
+            dom.inpTotal.disabled = true;
+            dom.inpWindow.disabled = true;
+            dom.inpTimeout.disabled = true;
+
+            dom.btnStart.disabled = true;
+            dom.btnPause.disabled = false;
+
+            if (!state.isRunning) {
+                state.isRunning = true;
+                state.isPaused = false;
+                state.lastRealTime = performance.now();
+                writeLog("--- Simulación Iniciada ---", 'log-white');
+                state.animationFrameId = requestAnimationFrame(loop);
+            } else if (state.isPaused) {
+                togglePause();
+            }
+        }
+
+        function togglePause() {
+            state.isPaused = !state.isPaused;
+            dom.btnPause.textContent = state.isPaused ? "Reanudar" : "Pausar";
+            dom.btnPause.className = state.isPaused ? "btn-success" : "";
+            if (!state.isPaused) {
+                state.lastRealTime = performance.now(); // Reset delta
+                writeLog("--- Simulación Reanudada ---", 'log-white');
+            } else {
+                writeLog("--- Simulación Pausada ---", 'log-white');
+            }
+        }
+
+        function stopSimulation() {
+            state.isRunning = false;
+            dom.btnPause.disabled = true;
+        }
+
+        function resetSimulation() {
+            if (state.animationFrameId) cancelAnimationFrame(state.animationFrameId);
+            
+            state = {
+                base: 0, nextSeqNum: 0, expectedSeqNum: 0, simTime: 0,
+                lastRealTime: 0, lastSendTime: -9999, isRunning: false, isPaused: false,
+                animationFrameId: null
+            };
+            timer = { active: false, startTime: 0, baseSeq: null };
+            inFlight = [];
+            nextFlightId = 0;
+            pendingError = null;
+
+            dom.inpTotal.disabled = false;
+            dom.inpWindow.disabled = false;
+            dom.inpTimeout.disabled = false;
+            
+            dom.btnStart.disabled = false;
+            dom.btnPause.disabled = true;
+            dom.btnPause.textContent = "Pausar";
+            dom.btnPause.className = "";
+            
+            dom.console.innerHTML = '<div class="log-entry log-white">Simulador reiniciado.</div>';
+            clearError();
+            
+            drawWindowViz();
+            render();
+            dom.diagramScroll.scrollTop = 0;
+        }
+
+        // Iniciar UI
+        initUI();
+
+    </script>
+</body>
+</html>

@@ -1,0 +1,1001 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Simulador Algoritmo Go-Back-N</title>
+    <style>
+        :root {
+            --primary: #2C3E50;
+            --secondary: #34495E;
+            --blue: #2196F3;
+            --green: #4CAF50;
+            --red: #F44336;
+            --orange: #FF9800;
+            --bg-light: #ECF0F1;
+            --text-dark: #2C3E50;
+            --text-light: #ECF0F1;
+            --win-pending: #E0E0E0;
+            --win-sent: #90CAF9;
+            --win-acked: #A5D6A7;
+            --font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: var(--font-family);
+            background-color: #f8f9fa;
+            color: var(--text-dark);
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        header {
+            background-color: var(--primary);
+            color: var(--text-light);
+            padding: 15px 20px;
+            text-align: center;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            z-index: 10;
+        }
+
+        #layout {
+            display: flex;
+            flex: 1;
+            overflow: hidden;
+        }
+
+        /* Paneles Laterales */
+        .sidebar {
+            width: 320px;
+            background-color: #fff;
+            border-right: 1px solid #ddd;
+            display: flex;
+            flex-direction: column;
+            overflow-y: auto;
+            box-shadow: 2px 0 5px rgba(0,0,0,0.05);
+            z-index: 5;
+        }
+
+        .sidebar-right {
+            border-right: none;
+            border-left: 1px solid #ddd;
+            background-color: #1e1e1e;
+            color: #d4d4d4;
+            overflow: hidden;
+        }
+
+        .panel-section {
+            padding: 20px;
+            border-bottom: 1px solid #eee;
+        }
+
+        .panel-section h3 {
+            margin-bottom: 15px;
+            font-size: 16px;
+            color: var(--primary);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .form-group {
+            margin-bottom: 15px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 5px;
+            font-size: 14px;
+            font-weight: bold;
+        }
+
+        .form-group input, .form-group select {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            font-family: var(--font-family);
+        }
+
+        button {
+            width: 100%;
+            padding: 10px;
+            background-color: var(--blue);
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: bold;
+            transition: background-color 0.2s;
+            margin-bottom: 10px;
+        }
+
+        button:hover {
+            background-color: #1976D2;
+        }
+
+        button.btn-danger { background-color: var(--red); }
+        button.btn-danger:hover { background-color: #D32F2F; }
+        button.btn-success { background-color: var(--green); }
+        button.btn-success:hover { background-color: #388E3C; }
+
+        /* Área Principal Central */
+        main {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            background-color: var(--bg-light);
+            position: relative;
+        }
+
+        /* Ventana Deslizante */
+        #window-visualizer {
+            padding: 20px;
+            background-color: white;
+            border-bottom: 2px solid #ddd;
+            overflow-x: auto;
+            display: flex;
+            align-items: center;
+            min-height: 120px;
+            position: relative;
+        }
+
+        .window-track {
+            display: flex;
+            position: relative;
+            padding: 10px 0;
+            margin-left: 20px;
+        }
+
+        .packet-box {
+            width: 40px;
+            height: 40px;
+            margin-right: 5px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            background-color: var(--win-pending);
+            transition: background-color 0.3s;
+            position: relative;
+        }
+
+        .packet-box.acked { background-color: var(--win-acked); border-color: #81C784; }
+        .packet-box.sent { background-color: var(--win-sent); border-color: #64B5F6; }
+        
+        #window-frame {
+            position: absolute;
+            top: 5px;
+            height: 50px;
+            border: 3px solid var(--primary);
+            border-radius: 6px;
+            pointer-events: none;
+            transition: transform 0.3s ease, width 0.3s ease;
+            box-shadow: 0 0 10px rgba(44, 62, 80, 0.2);
+        }
+
+        /* Diagrama de Secuencia */
+        #sequence-container {
+            flex: 1;
+            overflow-y: auto;
+            position: relative;
+            background-color: white;
+        }
+
+        svg {
+            display: block;
+            width: 100%;
+            min-height: 100%;
+        }
+
+        .entity-line {
+            stroke: var(--secondary);
+            stroke-width: 2;
+            stroke-dasharray: 5,5;
+        }
+
+        .entity-text {
+            font-weight: bold;
+            font-size: 16px;
+            fill: var(--primary);
+            text-anchor: middle;
+        }
+
+        .flight-line {
+            stroke-width: 2;
+        }
+        .flight-line.data { stroke: var(--blue); }
+        .flight-line.ack { stroke: var(--green); }
+        .flight-line.lost { stroke: var(--red); opacity: 0.5; }
+        .flight-line.dup-ack { stroke: var(--orange); stroke-dasharray: 4,4; }
+
+        .flight-text {
+            font-size: 12px;
+            font-weight: bold;
+            text-anchor: middle;
+        }
+        .flight-text.data { fill: var(--blue); }
+        .flight-text.ack { fill: var(--green); }
+        .flight-text.lost { fill: var(--red); }
+        .flight-text.dup-ack { fill: var(--orange); }
+        .flight-text.discarded { fill: var(--orange); }
+
+        .timeout-text {
+            fill: var(--red);
+            font-weight: bold;
+            font-size: 14px;
+        }
+
+        .timer-visual {
+            fill: none;
+            stroke: var(--primary);
+            stroke-width: 4;
+            stroke-linecap: round;
+        }
+        .timer-bg {
+            fill: none;
+            stroke: #ddd;
+            stroke-width: 4;
+            stroke-linecap: round;
+        }
+
+        /* Consola */
+        #console-output {
+            padding: 15px;
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 13px;
+            line-height: 1.5;
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+            overflow-y: auto;
+            flex: 1;
+            scroll-behavior: smooth;
+        }
+
+        .log-entry { padding: 4px 8px; border-left: 3px solid transparent; }
+        .log-normal { color: #569CD6; border-color: #569CD6; }
+        .log-success { color: #4CAF50; border-color: #4CAF50; }
+        .log-warning { color: #FF9800; border-color: #FF9800; }
+        .log-error { color: #F44336; border-color: #F44336; background-color: rgba(244, 67, 54, 0.1); }
+        .log-system { color: #D4D4D4; border-color: #888; }
+
+        /* Lista de Errores Programados */
+        #error-list {
+            margin-top: 10px;
+            font-size: 13px;
+            list-style: none;
+        }
+        #error-list li {
+            background-color: #ffebee;
+            color: #c62828;
+            padding: 5px 10px;
+            margin-bottom: 5px;
+            border-radius: 3px;
+            border-left: 3px solid var(--red);
+        }
+
+    </style>
+</head>
+<body>
+
+    <header>
+        <h2>Simulador Visual Go-Back-N</h2>
+    </header>
+
+    <div id="layout">
+        <!-- Controles -->
+        <aside class="sidebar">
+            <div class="panel-section">
+                <h3>Configuración</h3>
+                <div class="form-group">
+                    <label>Total de Paquetes:</label>
+                    <input type="number" id="inp-total" value="15" min="5" max="50">
+                </div>
+                <div class="form-group">
+                    <label>Tamaño de Ventana:</label>
+                    <input type="number" id="inp-window" value="4" min="1" max="10">
+                </div>
+                <div class="form-group">
+                    <label>Timeout (ms base):</label>
+                    <input type="number" id="inp-timeout" value="4000" min="1000" step="500">
+                </div>
+                <div class="form-group">
+                    <label>Velocidad:</label>
+                    <select id="inp-speed">
+                        <option value="0.5" selected>Lento (Recomendado)</option>
+                        <option value="1">Medio</option>
+                        <option value="2">Rápido</option>
+                    </select>
+                </div>
+                <button id="btn-start" class="btn-success">Iniciar Simulación</button>
+                <button id="btn-pause" style="display:none;">Pausar</button>
+                <button id="btn-reset" class="btn-danger">Reiniciar</button>
+            </div>
+
+            <div class="panel-section">
+                <h3>Forzar Errores</h3>
+                <div class="form-group">
+                    <label>Tipo de Error:</label>
+                    <select id="inp-err-type">
+                        <option value="none">Sin errores (Normal)</option>
+                        <option value="loss_packet">Pérdida de Paquete</option>
+                        <option value="loss_ack">Pérdida de ACK</option>
+                        <option value="timeout">Forzar Timeout Inmediato</option>
+                    </select>
+                </div>
+                <div class="form-group" id="group-err-seq" style="display:none;">
+                    <label>Número de Secuencia:</label>
+                    <input type="number" id="inp-err-seq" value="0" min="0">
+                </div>
+                <button id="btn-apply-error">Programar Error</button>
+                <ul id="error-list"></ul>
+            </div>
+        </aside>
+
+        <!-- Visualización -->
+        <main>
+            <div id="window-visualizer">
+                <div class="window-track" id="window-track">
+                    <!-- Cuadros generados por JS -->
+                    <div id="window-frame"></div>
+                </div>
+            </div>
+            <div id="sequence-container">
+                <svg id="seq-svg" xmlns="http://www.w3.org/2000/svg">
+                    <defs>
+                        <marker id="arrow-blue" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+                            <path d="M 0 0 L 10 5 L 0 10 z" fill="#2196F3" />
+                        </marker>
+                        <marker id="arrow-green" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+                            <path d="M 0 0 L 10 5 L 0 10 z" fill="#4CAF50" />
+                        </marker>
+                        <marker id="arrow-orange" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+                            <path d="M 0 0 L 10 5 L 0 10 z" fill="#FF9800" />
+                        </marker>
+                    </defs>
+                    <!-- Ejes base -->
+                    <text x="25%" y="30" class="entity-text">Emisor</text>
+                    <line x1="25%" y1="50" x2="25%" y2="10000" class="entity-line" />
+                    
+                    <text x="75%" y="30" class="entity-text">Receptor</text>
+                    <line x1="75%" y1="50" x2="75%" y2="10000" class="entity-line" />
+                    
+                    <!-- Elementos dinámicos aquí -->
+                    <g id="dynamic-svg-layer"></g>
+                </svg>
+            </div>
+        </main>
+
+        <!-- Consola -->
+        <aside class="sidebar sidebar-right">
+            <div class="panel-section" style="border-bottom: 1px solid #333; padding-bottom: 10px;">
+                <h3 style="color: #fff;">Consola de Eventos</h3>
+            </div>
+            <div id="console-output">
+                <div class="log-entry log-system">Sistema listo. Ajuste parámetros y presione Iniciar.</div>
+            </div>
+        </aside>
+    </div>
+
+    <script>
+        // DOM Elements
+        const inpTotal = document.getElementById('inp-total');
+        const inpWindow = document.getElementById('inp-window');
+        const inpTimeout = document.getElementById('inp-timeout');
+        const inpSpeed = document.getElementById('inp-speed');
+        
+        const btnStart = document.getElementById('btn-start');
+        const btnPause = document.getElementById('btn-pause');
+        const btnReset = document.getElementById('btn-reset');
+        
+        const inpErrType = document.getElementById('inp-err-type');
+        const inpErrSeq = document.getElementById('inp-err-seq');
+        const groupErrSeq = document.getElementById('group-err-seq');
+        const btnApplyError = document.getElementById('btn-apply-error');
+        const errorList = document.getElementById('error-list');
+
+        const windowTrack = document.getElementById('window-track');
+        const windowFrame = document.getElementById('window-frame');
+        const dynamicLayer = document.getElementById('dynamic-svg-layer');
+        const consoleOutput = document.getElementById('console-output');
+        const seqContainer = document.getElementById('sequence-container');
+        const svgElement = document.getElementById('seq-svg');
+
+        // Layout Constants
+        const SENDER_X = 25; // %
+        const RECEIVER_X = 75; // %
+        const START_Y = 50;
+        const BOX_WIDTH = 45; // 40px width + 5px margin
+
+        // Simulation State
+        let config = {
+            total: 15,
+            windowSize: 4,
+            timeoutBase: 4000,
+            flightTime: 2000, // ms to cross at 1x
+            sendSpacing: 600  // ms between consecutive sends
+        };
+
+        let state = {
+            base: 0,
+            nextSeq: 0,
+            expectedSeq: 0,
+            
+            simTime: 0,
+            lastRealTime: 0,
+            isPlaying: false,
+            speedMultiplier: 0.5,
+            
+            flights: [], // Active packets/acks
+            svgElements: [], // References to dynamically created SVG elements to cleanup on reset
+            
+            timerActive: false,
+            timerStartSimTime: 0,
+            timerSeq: 0,
+            
+            lastSendTime: -9999,
+            
+            programmedErrors: {
+                packetLoss: new Set(),
+                ackLoss: new Set()
+            },
+
+            animationFrameId: null
+        };
+
+        // --- UI Interactions ---
+
+        inpErrType.addEventListener('change', (e) => {
+            if (e.target.value === 'loss_packet' || e.target.value === 'loss_ack') {
+                groupErrSeq.style.display = 'block';
+            } else {
+                groupErrSeq.style.display = 'none';
+            }
+        });
+
+        btnApplyError.addEventListener('click', () => {
+            const type = inpErrType.value;
+            const seq = parseInt(inpErrSeq.value);
+
+            if (type === 'loss_packet') {
+                state.programmedErrors.packetLoss.add(seq);
+                addErrorToList(`Pérdida programada: Paquete ${seq}`, `pkg_${seq}`);
+                log(`Error programado: Paquete ${seq} se perderá en el próximo envío.`, 'system');
+            } else if (type === 'loss_ack') {
+                state.programmedErrors.ackLoss.add(seq);
+                addErrorToList(`Pérdida programada: ACK ${seq}`, `ack_${seq}`);
+                log(`Error programado: ACK ${seq} se perderá en el próximo envío.`, 'system');
+            } else if (type === 'timeout') {
+                forceTimeout();
+            }
+            // Reset select
+            inpErrType.value = 'none';
+            groupErrSeq.style.display = 'none';
+        });
+
+        inpSpeed.addEventListener('change', (e) => {
+            state.speedMultiplier = parseFloat(e.target.value);
+        });
+
+        btnStart.addEventListener('click', () => {
+            if (state.base === 0 && state.nextSeq === 0 && state.simTime === 0) {
+                // Initial start
+                applyConfig();
+                setupWindowVisuals();
+                log('Iniciando simulación Go-Back-N...', 'system');
+            }
+            startSimulation();
+        });
+
+        btnPause.addEventListener('click', pauseSimulation);
+        
+        btnReset.addEventListener('click', resetSimulation);
+
+        // --- Core Functions ---
+
+        function applyConfig() {
+            config.total = parseInt(inpTotal.value);
+            config.windowSize = parseInt(inpWindow.value);
+            config.timeoutBase = parseInt(inpTimeout.value);
+            state.speedMultiplier = parseFloat(inpSpeed.value);
+        }
+
+        function startSimulation() {
+            if (state.isPlaying) return;
+            state.isPlaying = true;
+            state.lastRealTime = performance.now();
+            btnStart.style.display = 'none';
+            btnPause.style.display = 'block';
+            
+            // Disable inputs during simulation run
+            inpTotal.disabled = true;
+            inpWindow.disabled = true;
+            inpTimeout.disabled = true;
+
+            gameLoop(performance.now());
+        }
+
+        function pauseSimulation() {
+            state.isPlaying = false;
+            btnStart.style.display = 'block';
+            btnPause.style.display = 'none';
+            btnStart.innerText = "Reanudar";
+            log('Simulación pausada.', 'system');
+            if (state.animationFrameId) {
+                cancelAnimationFrame(state.animationFrameId);
+                state.animationFrameId = null;
+            }
+        }
+
+        function resetSimulation() {
+            pauseSimulation();
+            
+            state.base = 0;
+            state.nextSeq = 0;
+            state.expectedSeq = 0;
+            state.simTime = 0;
+            state.flights = [];
+            state.timerActive = false;
+            state.lastSendTime = -9999;
+            state.programmedErrors = { packetLoss: new Set(), ackLoss: new Set() };
+            
+            dynamicLayer.innerHTML = '';
+            consoleOutput.innerHTML = '';
+            errorList.innerHTML = '';
+            
+            btnStart.innerText = "Iniciar Simulación";
+            btnStart.style.display = 'block';
+            btnPause.style.display = 'none';
+            
+            inpTotal.disabled = false;
+            inpWindow.disabled = false;
+            inpTimeout.disabled = false;
+
+            applyConfig();
+            setupWindowVisuals();
+            log('Simulación reiniciada.', 'system');
+            
+            // Reset SVG view
+            seqContainer.scrollTop = 0;
+            svgElement.style.height = '2000px';
+        }
+
+        // --- Logging ---
+        function log(msg, type = 'normal') {
+            const el = document.createElement('div');
+            el.className = `log-entry log-${type}`;
+            el.innerText = `[${Math.floor(state.simTime/1000)}s] ${msg}`;
+            consoleOutput.appendChild(el);
+            consoleOutput.scrollTop = consoleOutput.scrollHeight;
+        }
+
+        function addErrorToList(text, id) {
+            const li = document.createElement('li');
+            li.innerText = text;
+            li.id = `err-item-${id}`;
+            errorList.appendChild(li);
+        }
+
+        function removeErrorFromList(id) {
+            const el = document.getElementById(`err-item-${id}`);
+            if (el) el.remove();
+        }
+
+        // --- Visuals ---
+
+        function setupWindowVisuals() {
+            // Remove old boxes (keep the frame)
+            const boxes = windowTrack.querySelectorAll('.packet-box');
+            boxes.forEach(b => b.remove());
+
+            for (let i = 0; i < config.total; i++) {
+                const box = document.createElement('div');
+                box.className = 'packet-box';
+                box.id = `win-box-${i}`;
+                box.innerText = i;
+                windowTrack.insertBefore(box, windowFrame);
+            }
+            updateWindowVisuals();
+        }
+
+        function updateWindowVisuals() {
+            // Update classes
+            for (let i = 0; i < config.total; i++) {
+                const box = document.getElementById(`win-box-${i}`);
+                if (!box) continue;
+                
+                box.className = 'packet-box'; // reset
+                if (i < state.base) {
+                    box.classList.add('acked');
+                } else if (i >= state.base && i < state.nextSeq) {
+                    box.classList.add('sent');
+                }
+            }
+
+            // Move the frame
+            windowFrame.style.width = `${config.windowSize * BOX_WIDTH - 5}px`;
+            windowFrame.style.transform = `translateX(${state.base * BOX_WIDTH}px)`;
+        }
+
+        function getGlobalY(time) {
+            // Mapping simulation time to vertical position
+            // 1000ms = 80px drop to allow space for reading
+            return START_Y + (time * 0.08); 
+        }
+
+        function createSvgLine(x1, y1, x2, y2, type) {
+            const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+            line.setAttribute('x1', `${x1}%`);
+            line.setAttribute('y1', y1);
+            line.setAttribute('x2', `${x2}%`);
+            line.setAttribute('y2', y2);
+            line.setAttribute('class', `flight-line ${type}`);
+            if (type === 'data') line.setAttribute('marker-end', 'url(#arrow-blue)');
+            if (type === 'ack') line.setAttribute('marker-end', 'url(#arrow-green)');
+            if (type === 'dup-ack') line.setAttribute('marker-end', 'url(#arrow-orange)');
+            dynamicLayer.appendChild(line);
+            return line;
+        }
+
+        function createSvgText(text, x, y, type) {
+            const t = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+            t.setAttribute('x', `${x}%`);
+            t.setAttribute('y', y);
+            t.setAttribute('class', `flight-text ${type}`);
+            t.textContent = text;
+            dynamicLayer.appendChild(t);
+            return t;
+        }
+
+        function createSvgTimer() {
+            const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+            
+            const bg = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+            bg.setAttribute('class', 'timer-bg');
+            bg.setAttribute('x1', `${SENDER_X - 5}%`);
+            bg.setAttribute('x2', `${SENDER_X - 5}%`);
+            
+            const fg = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+            fg.setAttribute('class', 'timer-visual');
+            fg.setAttribute('x1', `${SENDER_X - 5}%`);
+            fg.setAttribute('x2', `${SENDER_X - 5}%`);
+
+            const txt = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+            txt.setAttribute('class', 'timeout-text');
+            txt.setAttribute('x', `${SENDER_X - 15}%`);
+            
+            g.appendChild(bg);
+            g.appendChild(fg);
+            g.appendChild(txt);
+            dynamicLayer.appendChild(g);
+            return { g, bg, fg, txt };
+        }
+
+        function drawLossCross(x, y) {
+            const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+            const l1 = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+            const l2 = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+            const size = 10;
+            l1.setAttribute('x1', `calc(${x}% - ${size}px)`);
+            l1.setAttribute('y1', y - size);
+            l1.setAttribute('x2', `calc(${x}% + ${size}px)`);
+            l1.setAttribute('y2', y + size);
+            l1.setAttribute('stroke', 'red');
+            l1.setAttribute('stroke-width', '3');
+            
+            l2.setAttribute('x1', `calc(${x}% - ${size}px)`);
+            l2.setAttribute('y1', y + size);
+            l2.setAttribute('x2', `calc(${x}% + ${size}px)`);
+            l2.setAttribute('y2', y - size);
+            l2.setAttribute('stroke', 'red');
+            l2.setAttribute('stroke-width', '3');
+            
+            g.appendChild(l1);
+            g.appendChild(l2);
+            dynamicLayer.appendChild(g);
+        }
+
+        // --- Network Logic ---
+
+        function sendPacket(seq) {
+            let willLose = false;
+            if (state.programmedErrors.packetLoss.has(seq)) {
+                willLose = true;
+                state.programmedErrors.packetLoss.delete(seq);
+                removeErrorFromList(`pkg_${seq}`);
+            }
+
+            log(`Enviando paquete ${seq}`, 'normal');
+            
+            const flight = {
+                type: 'data',
+                seq: seq,
+                startTime: state.simTime,
+                startY: getGlobalY(state.simTime),
+                willLose: willLose,
+                status: 'flying',
+                uiLine: createSvgLine(SENDER_X, getGlobalY(state.simTime), SENDER_X, getGlobalY(state.simTime), 'data'),
+                uiText: createSvgText(`Paquete ${seq}`, (SENDER_X + RECEIVER_X)/2, getGlobalY(state.simTime) - 5, 'data')
+            };
+            
+            state.flights.push(flight);
+        }
+
+        function sendAck(seq, isDuplicate = false) {
+            let willLose = false;
+            if (state.programmedErrors.ackLoss.has(seq) && !isDuplicate) {
+                // Solo perdemos el ACK original para simular, no forzamos la pérdida de todos los duplicados si el usuario marcó "perder ACK X"
+                willLose = true;
+                state.programmedErrors.ackLoss.delete(seq);
+                removeErrorFromList(`ack_${seq}`);
+            }
+
+            const typeClass = isDuplicate ? 'dup-ack' : 'ack';
+            const logMsg = isDuplicate ? `Generando ACK ${seq} (Repetido)` : `Generando ACK ${seq}`;
+            log(logMsg, isDuplicate ? 'warning' : 'success');
+            
+            const flight = {
+                type: 'ack',
+                seq: seq,
+        function onPacketArrive(seq, flightRef) {
+            if (seq === state.expectedSeq) {
+                log(`Paquete ${seq} recibido en orden.`, 'success');
+                state.expectedSeq++;
+                sendAck(seq);
+            } else {
+                log(`Paquete ${seq} descartado (fuera de orden). Se esperaba ${state.expectedSeq}.`, 'error');
+                
+                // MEJORA VISUAL: Marcar el paquete como descartado en el diagrama
+                if (flightRef) {
+                    flightRef.uiLine.classList.remove('data');
+                    flightRef.uiLine.classList.add('dup-ack'); // Reusamos el estilo naranja punteado
+                    flightRef.uiLine.removeAttribute('marker-end');
+                    flightRef.uiLine.setAttribute('marker-end', 'url(#arrow-orange)');
+                    
+                    flightRef.uiText.classList.remove('data');
+                    flightRef.uiText.classList.add('discarded');
+                    flightRef.uiText.textContent += " (Descartado)";
+                }
+
+                // En GBN clásico, reenviamos el último ACK válido acumulativo repetidas veces
+                if (state.expectedSeq > 0) {
+                    sendAck(state.expectedSeq - 1, true); // Enviar ACK duplicado
+                }
+            }
+        }
+
+        function onAckArrive(seq, isDuplicate) {
+            if (seq >= state.base) {
+                // CASO NORMAL O ACK ACUMULATIVO
+                if (seq > state.base) {
+                    log(`ACK acumulativo ${seq} recibido.`, 'success');
+                } else {
+                    log(`ACK ${seq} recibido.`, 'success');
+                }
+                
+                state.base = seq + 1;
+                log(`Ventana desplazada a partir del paquete ${state.base}`, 'success');
+                updateWindowVisuals();
+                
+                if (state.base === state.nextSeq) {
+                    // Todos los paquetes en vuelo confirmados, detener timer
+                    state.timerActive = false;
+                    if (currentTimerVisual) {
+                        currentTimerVisual.g.style.display = 'none';
+                    }
+                } else {
+                    // Reiniciar timer para el nuevo paquete base no confirmado
+                    state.timerActive = true;
+                    state.timerStartSimTime = state.simTime;
+                    state.timerSeq = state.base;
+                }
+
+                if (state.base >= config.total) {
+                    log('Transmisión completada exitosamente.', 'success');
+                    setTimeout(() => pauseSimulation(), 100);
+                }
+            } else {
+                // ACK duplicado / ignorado
+                log(`ACK ${seq} repetido recibido (Ignorado, ventana ya en ${state.base}).`, 'warning');
+            }
+        }
+
+        function forceTimeout() {
+            if (!state.timerActive) {
+                log('No hay timer activo para forzar timeout.', 'system');
+                return;
+            }
+            log(`¡TIMEOUT FORZADO para el paquete ${state.timerSeq}!`, 'error');
+            executeTimeout();
+        }
+
+        function executeTimeout() {
+            state.timerActive = false;
+            if (currentTimerVisual) {
+                currentTimerVisual.g.style.display = 'none';
+            }
+
+            // GBN Behavior: reset nextSeq to base, resend window
+            let packetsToResend = [];
+            for (let i = state.base; i < state.nextSeq; i++) {
+                packetsToResend.push(i);
+            }
+            
+            log(`Timeout en paquete base ${state.base}`, 'error');
+            
+            if (packetsToResend.length > 0) {
+                log(`Reenviando: ${packetsToResend.join(', ')}`, 'system');
+            } else {
+                log(`Reenviando desde paquete ${state.base}`, 'system');
+            }
+
+            state.nextSeq = state.base;
+            state.lastSendTime = state.simTime - config.sendSpacing; // Permitir reenvío inmediato
+            updateWindowVisuals();
+            
+            // Dibujar un indicador de timeout en el diagrama
+            const y = getGlobalY(state.simTime);
+            const t = createSvgText(`TIMEOUT (Base ${state.base})`, SENDER_X, y, 'lost');
+            t.setAttribute('text-anchor', 'end');
+            t.setAttribute('dx', '-10');
+        }
+
+
+        let currentTimerVisual = null;
+
+        // --- Main Loop ---
+
+        function gameLoop(timestamp) {
+            if (!state.isPlaying) return;
+
+            // Calculate delta time
+            const dtReal = timestamp - state.lastRealTime;
+            state.lastRealTime = timestamp;
+            
+            // Advance simulation time
+            const dtSim = dtReal * state.speedMultiplier;
+            state.simTime += dtSim;
+
+            const currentY = getGlobalY(state.simTime);
+
+            // 1. Check Sender logic (Send packets if window allows)
+            if (state.nextSeq < state.base + config.windowSize && state.nextSeq < config.total) {
+                if (state.simTime - state.lastSendTime >= config.sendSpacing) {
+                    sendPacket(state.nextSeq);
+                    
+                    if (state.base === state.nextSeq) {
+                        // Primer paquete en la ventana, iniciar timer
+                        state.timerActive = true;
+                        state.timerStartSimTime = state.simTime;
+                        state.timerSeq = state.base;
+                        
+                        if (!currentTimerVisual) {
+                            currentTimerVisual = createSvgTimer();
+                        }
+                    }
+                    
+                    state.nextSeq++;
+                    state.lastSendTime = state.simTime;
+                    updateWindowVisuals();
+                }
+            }
+
+            // 2. Check Timer
+            if (state.timerActive) {
+                const elapsed = state.simTime - state.timerStartSimTime;
+                
+                // Update timer visual
+                if (currentTimerVisual) {
+                    currentTimerVisual.g.style.display = 'block';
+                    const startY = getGlobalY(state.timerStartSimTime);
+                    const endY = getGlobalY(state.timerStartSimTime + config.timeoutBase);
+                    
+                    currentTimerVisual.bg.setAttribute('y1', startY);
+                    currentTimerVisual.bg.setAttribute('y2', endY);
+                    
+                    currentTimerVisual.fg.setAttribute('y1', startY);
+                    currentTimerVisual.fg.setAttribute('y2', startY + (endY - startY) * (elapsed / config.timeoutBase));
+                    
+                    currentTimerVisual.txt.setAttribute('y', startY + (endY - startY)/2);
+                    currentTimerVisual.txt.textContent = `Timer Pkg ${state.timerSeq}`;
+                }
+
+                if (elapsed >= config.timeoutBase) {
+                    // ¡TIMEOUT!
+                    executeTimeout();
+                }
+            } else if (currentTimerVisual) {
+                currentTimerVisual.g.style.display = 'none';
+            }
+
+            // 3. Update Flights
+            state.flights.forEach(f => {
+                if (f.status === 'done') return;
+
+                const progress = (state.simTime - f.startTime) / config.flightTime;
+                const startX = f.type === 'data' ? SENDER_X : RECEIVER_X;
+                const endX = f.type === 'data' ? RECEIVER_X : SENDER_X;
+                const travelY = getGlobalY(f.startTime + config.flightTime) - f.startY;
+
+                if (f.willLose && progress >= 0.5 && f.status !== 'lost') {
+                    f.status = 'lost';
+                    
+                    // Stop visually
+                    const currX = startX + 0.5 * (endX - startX);
+                    const currY = f.startY + 0.5 * travelY;
+                    
+                    f.uiLine.setAttribute('x2', `${currX}%`);
+                    f.uiLine.setAttribute('y2', currY);
+                    f.uiLine.classList.add('lost');
+                    f.uiLine.removeAttribute('marker-end'); // remove arrow
+                    
+                    f.uiText.setAttribute('x', `${currX}%`);
+                    f.uiText.setAttribute('y', currY - 10);
+                    f.uiText.classList.add('lost');
+                    
+                    if (f.type === 'data') {
+                        f.uiText.textContent += " (Perdido)";
+                        log(`Paquete ${f.seq} perdido.`, 'error');
+                    } else {
+                        f.uiText.textContent += " (Perdido)";
+                        log(`ACK ${f.seq} perdido.`, 'error');
+                    }
+
+                    drawLossCross(currX, currY);
+                    return;
+                }
+
+                if (f.status === 'lost') return; // Dead in water
+
+                if (progress >= 1.0) {
+                    // Arrived
+                    f.status = 'done';
+                    f.uiLine.setAttribute('x2', `${endX}%`);
+                    f.uiLine.setAttribute('y2', f.startY + travelY);
+                    f.uiText.setAttribute('x', `${(startX + endX)/2}%`);
+                    f.uiText.setAttribute('y', f.startY + travelY/2 - 5);
+                    
+                    if (f.type === 'data') onPacketArrive(f.seq, f);
+                    else onAckArrive(f.seq, f.isDuplicate);
+                    
+                } else {
+                    // Moving
+                    const currX = startX + progress * (endX - startX);
+                    const currY = f.startY + progress * travelY;
+                    
+                    f.uiLine.setAttribute('x2', `${currX}%`);
+                    f.uiLine.setAttribute('y2', currY);
+                    
+                    f.uiText.setAttribute('x', `${(startX + currX)/2}%`);
+                    f.uiText.setAttribute('y', f.startY + (progress * travelY)/2 - 5);
+                }
+            });
+
+            // Auto-scroll sequence container
+            if (currentY > seqContainer.clientHeight / 2) {
+                seqContainer.scrollTop = currentY - seqContainer.clientHeight / 2;
+            }
+            // Grow SVG if needed
+            if (currentY > svgElement.clientHeight - 200) {
+                svgElement.style.height = `${currentY + 1000}px`;
+            }
+
+            state.animationFrameId = requestAnimationFrame(gameLoop);
+        }
+
+        // Initialize empty state visually
+        setupWindowVisuals();
+
+    </script>
+</body>
+</html>

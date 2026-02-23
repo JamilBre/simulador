@@ -747,6 +747,18 @@
             const flight = {
                 type: 'ack',
                 seq: seq,
+                isDuplicate: isDuplicate,
+                startTime: state.simTime,
+                startY: getGlobalY(state.simTime),
+                willLose: willLose,
+                status: 'flying',
+                uiLine: createSvgLine(RECEIVER_X, getGlobalY(state.simTime), RECEIVER_X, getGlobalY(state.simTime), typeClass),
+                uiText: createSvgText(`ACK ${seq}`, (SENDER_X + RECEIVER_X)/2, getGlobalY(state.simTime) - 5, typeClass)
+            };
+            
+            state.flights.push(flight);
+        }
+
         function onPacketArrive(seq, flightRef) {
             if (seq === state.expectedSeq) {
                 log(`Paquete ${seq} recibido en orden.`, 'success');

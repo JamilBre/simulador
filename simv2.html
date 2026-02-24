@@ -193,20 +193,36 @@
             background: #ecf0f1;
             border-radius: 4px;
             padding: 8px;
+            min-height: 40px;
+            max-height: 95px;
+            overflow-y: auto;
+        }
+
+        .timer-item {
+            display: flex;
+            align-items: center;
+            font-size: 0.75rem;
+            margin-top: 4px;
+        }
+
+        .timer-label {
+            width: 35px;
+            font-weight: bold;
         }
 
         .timer-bar-bg {
-            height: 10px;
+            flex: 1;
+            height: 8px;
             background: #bdc3c7;
-            border-radius: 5px;
+            border-radius: 4px;
             overflow: hidden;
-            margin-top: 5px;
         }
 
         .timer-bar-fill {
             height: 100%;
             width: 0%;
             background: var(--color-error);
+            transition: width 0.1s linear;
         }
 
         /* Diagrama de Secuencia */
@@ -300,6 +316,13 @@
                 <h2>Controles de Simulación</h2>
                 
                 <div class="control-group">
+                    <label>Protocolo:</label>
+                    <select id="inp-protocol">
+                        <option value="GBN" selected>Go-Back-N (GBN)</option>
+                        <option value="SR">Repetición Selectiva (SR)</option>
+                    </select>
+                </div>
+                <div class="control-group">
                     <label>Total de Paquetes:</label>
                     <input type="number" id="inp-total" value="15" min="5" max="50">
                 </div>
@@ -367,13 +390,8 @@
                     <!-- Generado por JS -->
                 </div>
 
-                <div class="timer-container">
-                    <div style="font-size: 0.85rem; font-weight: bold;">
-                        Temporizador (Paquete Base: <span id="lbl-timer-base">-</span>)
-                    </div>
-                    <div class="timer-bar-bg">
-                        <div id="timer-bar" class="timer-bar-fill"></div>
-                    </div>
+                <div class="timer-container" id="timer-container">
+                    <!-- Generado por JS dinámicamente -->
                 </div>
             </div>
 
@@ -423,6 +441,7 @@
         };
 
         let params = {
+            protocol: 'GBN',
             totalPackets: 15,
             windowSize: 4,
             timeout: 5000,
@@ -432,7 +451,9 @@
         let state = {
             base: 0,
             nextSeqNum: 0,
-            expectedSeqNum: 0,
+            rcvBase: 0, // Reemplaza a expectedSeqNum
+            rcvBuffer: {}, // Usado en SR para paquetes fuera de orden
+            senderAcked: {}, // Usado en SR para confirmar paquetes individuales
             simTime: 0,
             lastRealTime: 0,
             lastSendTime: -9999,
@@ -441,11 +462,7 @@
             animationFrameId: null
         };
 
-        let timer = {
-            active: false,
-            startTime: 0,
-            baseSeq: null
-        };
+        let timers = {}; // Objeto para manejar múltiples temporizadores: { seq: { active, startTime } }
 
         // inFlight contiene: { id, type: 'DATA'|'ACK', seq, startT, isDup, isLost, status, color }
         let inFlight = [];
@@ -461,12 +478,12 @@
             inpWindow: document.getElementById('inp-window'),
             inpTimeout: document.getElementById('inp-timeout'),
             inpSpeed: document.getElementById('inp-speed'),
+            inpProtocol: document.getElementById('inp-protocol'),
             packetContainer: document.getElementById('packet-container'),
             windowFrame: document.getElementById('window-frame'),
             lblBase: document.getElementById('lbl-base'),
             lblNext: document.getElementById('lbl-next'),
-            lblTimerBase: document.getElementById('lbl-timer-base'),
-            timerBar: document.getElementById('timer-bar'),
+            timerContainer: document.getElementById('timer-container'),
             svg: document.getElementById('sequence-svg'),
             diagramScroll: document.getElementById('diagram-scroll'),
             console: document.getElementById('console'),
@@ -480,6 +497,7 @@
             dom.inpTotal.addEventListener('change', drawWindowViz);
             dom.inpWindow.addEventListener('change', drawWindowViz);
             dom.inpSpeed.addEventListener('change', (e) => params.speed = parseFloat(e.target.value));
+            dom.inpProtocol.addEventListener('change', resetSimulation);
             drawWindowViz();
         }
 
@@ -539,11 +557,11 @@
                 writeLog("[Sistema] No hay paquetes pendientes para forzar timeout.", 'log-white');
                 return;
             }
-            writeLog("[Sistema] TIMEOUT FORZADO por usuario.", 'log-red');
-            handleTimeout();
+            writeLog(`[Sistema] TIMEOUT FORZADO por usuario para la base actual (${state.base}).`, 'log-red');
+            handleTimeout(state.base);
         }
 
-        // --- Lógica de Protocolo GBN ---
+        // --- Lógica de Protocolo ---
 
         function sendPacket(seq) {
             const isLost = checkErrorInjection('packet', seq);
@@ -561,23 +579,49 @@
 
             writeLog(`Enviando Paquete ${seq}`, 'log-blue');
             
-            // Lógica GBN: Iniciar timer si es el primero de la ventana
-            if (state.base === seq) {
-                timer.active = true;
-                timer.startTime = state.simTime;
-                timer.baseSeq = state.base;
+            // Iniciar temporizador
+            if (params.protocol === 'GBN') {
+                if (state.base === seq) timers[state.base] = { active: true, startTime: state.simTime };
+            } else {
+                timers[seq] = { active: true, startTime: state.simTime };
             }
         }
 
         function receivePacket(seq) {
-            if (seq === state.expectedSeqNum) {
-                writeLog(`Paquete ${seq} recibido EN ORDEN.`, 'log-blue');
-                state.expectedSeqNum++;
-                sendAck(state.expectedSeqNum - 1, false);
+            if (params.protocol === 'GBN') {
+                if (seq === state.rcvBase) {
+                    writeLog(`Paquete ${seq} recibido EN ORDEN.`, 'log-blue');
+                    state.rcvBase++;
+                    sendAck(state.rcvBase - 1, false);
+                } else {
+                    writeLog(`Paquete ${seq} FUERA DE ORDEN (esperado: ${state.rcvBase}). Descartado.`, 'log-red');
+                    if (state.rcvBase > 0) {
+                        sendAck(state.rcvBase - 1, true); // ACK duplicado
+                    }
+                }
             } else {
-                writeLog(`Paquete ${seq} FUERA DE ORDEN (esperado: ${state.expectedSeqNum}). Descartado.`, 'log-red');
-                if (state.expectedSeqNum > 0) {
-                    sendAck(state.expectedSeqNum - 1, true); // ACK duplicado
+                // Lógica de Repetición Selectiva (SR)
+                if (seq >= state.rcvBase && seq < state.rcvBase + params.windowSize) {
+                    sendAck(seq, false);
+                    if (!state.rcvBuffer[seq]) {
+                        state.rcvBuffer[seq] = true;
+                        writeLog(`Paquete ${seq} recibido y almacenado en búfer.`, 'log-blue');
+                    }
+                    
+                    // Deslizar ventana de recepción si recibimos la base
+                    if (seq === state.rcvBase) {
+                        while (state.rcvBuffer[state.rcvBase]) {
+                            delete state.rcvBuffer[state.rcvBase];
+                            state.rcvBase++;
+                        }
+                        writeLog(`Se entregaron paquetes. Ventana de recepción avanza a [${state.rcvBase}, ${state.rcvBase + params.windowSize - 1}]`, 'log-white');
+                    }
+                } else if (seq >= state.rcvBase - params.windowSize && seq < state.rcvBase) {
+                    // El paquete ya se recibió, pero su ACK se perdió
+                    writeLog(`Paquete ${seq} ya fue recibido antes. Reenviando ACK.`, 'log-orange');
+                    sendAck(seq, true);
+                } else {
+                    writeLog(`Paquete ${seq} fuera de ventana de recepción. Descartado.`, 'log-red');
                 }
             }
         }
@@ -606,34 +650,60 @@
         }
 
         function receiveAck(seq, isDup) {
-            if (isDup) {
-                writeLog(`Emisor recibe ACK Duplicado ${seq}. Ignorado.`, 'log-orange');
-            } else if (seq >= state.base) {
-                writeLog(`Emisor recibe ACK ${seq}. Ventana avanza.`, 'log-green');
-                state.base = seq + 1;
-                
-                // Lógica GBN Temporizador
-                if (state.base === state.nextSeqNum) {
-                    // Todos confirmados, detener timer
-                    timer.active = false;
-                    timer.baseSeq = null;
+            if (params.protocol === 'GBN') {
+                if (isDup) {
+                    writeLog(`Emisor recibe ACK Duplicado ${seq}. Ignorado.`, 'log-orange');
+                } else if (seq >= state.base) {
+                    writeLog(`Emisor recibe ACK ${seq}. Ventana avanza.`, 'log-green');
+                    state.base = seq + 1;
+                    
+                    // Limpiar temporizadores viejos y reiniciar si hay pendientes
+                    for (let k in timers) delete timers[k];
+                    if (state.base < state.nextSeqNum) {
+                        timers[state.base] = { active: true, startTime: state.simTime };
+                    }
                 } else {
-                    // Aún hay pendientes, reiniciar timer
-                    timer.startTime = state.simTime;
-                    timer.baseSeq = state.base;
-                    timer.active = true;
+                    writeLog(`Emisor recibe ACK ${seq} retrasado. Ignorado.`, 'log-white');
                 }
             } else {
-                writeLog(`Emisor recibe ACK ${seq} retrasado. Ignorado.`, 'log-white');
+                // Lógica de Repetición Selectiva (SR)
+                if (seq >= state.base && seq < state.base + params.windowSize) {
+                    if (!state.senderAcked[seq]) {
+                        state.senderAcked[seq] = true;
+                        if (timers[seq]) timers[seq].active = false; // Detener temporizador
+                        writeLog(`Emisor recibe ACK ${seq}. Paquete confirmado independientemente.`, 'log-green');
+
+                        // Deslizar ventana de emisión si la base fue confirmada
+                        if (seq === state.base) {
+                            while (state.senderAcked[state.base]) {
+                                delete state.senderAcked[state.base];
+                                state.base++;
+                            }
+                            writeLog(`Base del emisor avanza a ${state.base}.`, 'log-white');
+                        }
+                    } else {
+                        writeLog(`Emisor recibe ACK ${seq} ya confirmado. Ignorado.`, 'log-white');
+                    }
+                } else {
+                    writeLog(`Emisor recibe ACK ${seq} fuera de ventana. Ignorado.`, 'log-white');
+                }
             }
         }
 
-        function handleTimeout() {
-            writeLog(`TIMEOUT expirado para Paquete Base ${state.base}.`, 'log-red');
-            writeLog(`Retransmitiendo TODOS los paquetes desde ${state.base} hasta ${state.nextSeqNum - 1}.`, 'log-red');
-            
-            timer.startTime = state.simTime; // Reiniciar timer
-            state.nextSeqNum = state.base; // Retroceder nextSeqNum a base para retransmitir ventana
+        function handleTimeout(seqTarget) {
+            if (params.protocol === 'GBN') {
+                writeLog(`TIMEOUT expirado para Paquete Base ${state.base}.`, 'log-red');
+                writeLog(`Retransmitiendo TODOS los paquetes desde ${state.base} hasta ${state.nextSeqNum - 1}.`, 'log-red');
+                
+                timers[state.base] = { active: true, startTime: state.simTime }; // Reiniciar timer
+                state.nextSeqNum = state.base; // Retroceder para retransmitir ventana
+            } else {
+                writeLog(`TIMEOUT expirado para Paquete ${seqTarget}.`, 'log-red');
+                writeLog(`Retransmitiendo SOLO el paquete ${seqTarget} (SR).`, 'log-red');
+                
+                if (timers[seqTarget]) timers[seqTarget].startTime = state.simTime; // Reiniciar timer individual
+                sendPacket(seqTarget); // Retransmite solo ese paquete, no afecta nextSeqNum
+            }
         }
 
         // --- Bucle de Simulación ---
@@ -662,9 +732,19 @@
                 return;
             }
 
-            // 1. Control de Timeout GBN (Un solo timer)
-            if (timer.active && (state.simTime - timer.startTime >= params.timeout)) {
-                handleTimeout();
+            // 1. Control de Timeout
+            if (params.protocol === 'GBN') {
+                let t = timers[state.base];
+                if (t && t.active && (state.simTime - t.startTime >= params.timeout)) {
+                    handleTimeout(state.base);
+                }
+            } else {
+                for (let seq = state.base; seq < state.nextSeqNum; seq++) {
+                    let t = timers[seq];
+                    if (t && t.active && !state.senderAcked[seq] && (state.simTime - t.startTime >= params.timeout)) {
+                        handleTimeout(seq);
+                    }
+                }
             }
 
             // 2. Control de Envío (Llenar ventana de emisor)
@@ -737,23 +817,49 @@
                 if (i < state.base) {
                     el.classList.add('acked');
                 } else if (i >= state.base && i < state.nextSeqNum) {
-                    el.classList.add('sent');
+                    if (params.protocol === 'SR' && state.senderAcked[i]) {
+                        el.classList.add('acked'); // SR: Paquetes confirmados individualmente
+                    } else {
+                        el.classList.add('sent');
+                    }
                 }
             }
         }
 
         function updateTimerViz() {
-            if (timer.active) {
-                dom.lblTimerBase.textContent = timer.baseSeq;
-                let progress = (state.simTime - timer.startTime) / params.timeout;
-                if (progress > 1) progress = 1;
-                if (progress < 0) progress = 0;
-                dom.timerBar.style.width = (progress * 100) + '%';
-                // Cambiar color a medida que se acerca
-                dom.timerBar.style.background = progress > 0.8 ? 'var(--color-error)' : '#3498db';
-            } else {
-                dom.lblTimerBase.textContent = '-';
-                dom.timerBar.style.width = '0%';
+            dom.timerContainer.innerHTML = '<div style="font-size: 0.85rem; font-weight: bold; margin-bottom:5px;">Temporizadores Activos</div>';
+            let activeCount = 0;
+
+            let checkRange = params.protocol === 'GBN' ? [state.base] : [];
+            if (params.protocol === 'SR') {
+                for (let i = state.base; i < state.nextSeqNum; i++) checkRange.push(i);
+            }
+
+            checkRange.forEach(seq => {
+                let t = timers[seq];
+                if (t && t.active && !(params.protocol === 'SR' && state.senderAcked[seq])) {
+                    let progress = (state.simTime - t.startTime) / params.timeout;
+                    if (progress > 1) progress = 1;
+                    if (progress < 0) progress = 0;
+                    let color = progress > 0.8 ? 'var(--color-error)' : '#3498db';
+                    
+                    dom.timerContainer.innerHTML += `
+                        <div class="timer-item">
+                            <span class="timer-label">P${seq}</span>
+                            <div class="timer-bar-bg">
+                                <div style="width:${progress*100}%; background:${color};" class="timer-bar-fill"></div>
+                            </div>
+                        </div>`;
+                    activeCount++;
+                }
+            });
+
+            if (activeCount === 0) {
+                dom.timerContainer.innerHTML += `
+                    <div class="timer-item">
+                        <span class="timer-label">-</span>
+                        <div class="timer-bar-bg"><div style="width:0%" class="timer-bar-fill"></div></div>
+                    </div>`;
             }
         }
 
@@ -775,7 +881,8 @@
             html += `<text x="${config.receiverX}%" y="${scrollY + 20}" class="axis-label" text-anchor="middle">RECEPTOR</text>`;
 
             // Estado Receptor
-            html += `<text x="${config.receiverX + 2}%" y="${scrollY + 40}" class="state-label">Expected: ${state.expectedSeqNum}</text>`;
+            let rcvText = params.protocol === 'GBN' ? `Expected: ${state.rcvBase}` : `Ventana Rcv: [${state.rcvBase}, ${state.rcvBase + params.windowSize - 1}]`;
+            html += `<text x="${config.receiverX + 2}%" y="${scrollY + 40}" class="state-label">${rcvText}</text>`;
 
             // Dibujar flechas
             inFlight.forEach(item => {
@@ -844,6 +951,7 @@
 
         function startSimulation() {
             // Leer params
+            params.protocol = dom.inpProtocol.value;
             params.totalPackets = parseInt(dom.inpTotal.value);
             params.windowSize = parseInt(dom.inpWindow.value);
             params.timeout = parseInt(dom.inpTimeout.value);
@@ -853,6 +961,7 @@
             dom.inpTotal.disabled = true;
             dom.inpWindow.disabled = true;
             dom.inpTimeout.disabled = true;
+            dom.inpProtocol.disabled = true;
 
             dom.btnStart.disabled = true;
             dom.btnPause.disabled = false;
@@ -889,11 +998,12 @@
             if (state.animationFrameId) cancelAnimationFrame(state.animationFrameId);
             
             state = {
-                base: 0, nextSeqNum: 0, expectedSeqNum: 0, simTime: 0,
+                protocol: dom.inpProtocol.value,
+                base: 0, nextSeqNum: 0, rcvBase: 0, rcvBuffer: {}, senderAcked: {}, simTime: 0,
                 lastRealTime: 0, lastSendTime: -9999, isRunning: false, isPaused: false,
                 animationFrameId: null
             };
-            timer = { active: false, startTime: 0, baseSeq: null };
+            timers = {};
             inFlight = [];
             nextFlightId = 0;
             pendingError = null;
@@ -901,6 +1011,7 @@
             dom.inpTotal.disabled = false;
             dom.inpWindow.disabled = false;
             dom.inpTimeout.disabled = false;
+            dom.inpProtocol.disabled = false;
             
             dom.btnStart.disabled = false;
             dom.btnPause.disabled = true;
